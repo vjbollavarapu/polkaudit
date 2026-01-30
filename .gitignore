@@ -1,0 +1,33 @@
+# General
+.DS_Store
+.idea
+.vscode
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+.next/
+out/
+dist/
+coverage/
+
+# Misc
+.terraform/
+*.tfstate
