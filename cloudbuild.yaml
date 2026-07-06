@@ -1,0 +1,199 @@
+# PolkAudit — Cloud Build: build images, deploy Backend + Indexer + Dashboard to Cloud Run
+#
+# Prerequisites (one-time): see docs/GCP_CLOUD_BUILD.md
+#   - Artifact Registry repo
+#   - Secret Manager: polkaudit-database-url, polkaudit-api-key
+#   - Optional: polkaudit-substrate-rpc-url
+#
+# Trigger substitutions (override in Cloud Build trigger UI):
+#   _REGION          e.g. asia-southeast1
+#   _AR_REPO         e.g. polkaudit
+#   _API_KEY         must match Secret Manager polkaudit-api-key value
+
+substitutions:
+  _REGION: asia-southeast1
+  _AR_REPO: polkaudit
+  _BACKEND_SERVICE: polkaudit-backend
+  _INDEXER_SERVICE: polkaudit-indexer
+  _DASHBOARD_SERVICE: polkaudit-dashboard
+  _API_KEY: dev-secret-key
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/backend:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/indexer:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/dashboard:${SHORT_SHA}
+
+steps:
+  # ---------------------------------------------------------------------------
+  # Backend
+  # ---------------------------------------------------------------------------
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/backend:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/backend:latest
+      - -f
+      - apps/backend/Dockerfile
+      - apps/backend
+
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/backend
+    waitFor: [build-backend]
+
+  - id: deploy-backend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_BACKEND_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/backend:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --cpu=1
+      - --memory=512Mi
+      - --min-instances=0
+      - --max-instances=10
+      - --timeout=300
+      - --set-secrets=DATABASE_URL=polkaudit-database-url:latest,API_KEY=polkaudit-api-key:latest
+      - --set-env-vars=LOG_LEVEL=INFO
+    waitFor: [push-backend]
+
+  - id: backend-url
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        URL=$(gcloud run services describe ${_BACKEND_SERVICE} \
+          --region=${_REGION} \
+          --platform=managed \
+          --format='value(status.url)')
+        echo "Backend URL: $${URL}"
+        echo "$${URL}" > /workspace/backend_url.txt
+    waitFor: [deploy-backend]
+
+  # ---------------------------------------------------------------------------
+  # Indexer (long-running worker; keep warm, no CPU throttling)
+  # ---------------------------------------------------------------------------
+  - id: build-indexer
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/indexer:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/indexer:latest
+      - -f
+      - apps/indexer/Dockerfile
+      - apps/indexer
+
+  - id: push-indexer
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/indexer
+    waitFor: [build-indexer]
+
+  - id: deploy-indexer
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_INDEXER_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/indexer:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --port=8080
+      - --cpu=1
+      - --memory=1Gi
+      - --min-instances=1
+      - --max-instances=1
+      - --no-cpu-throttling
+      - --timeout=3600
+      - --set-secrets=DATABASE_URL=polkaudit-database-url:latest
+      - --set-env-vars=LOG_LEVEL=INFO,INDEXER_CATCHUP_WINDOW=500,RETRY_DELAY_SECONDS=2,SUBSTRATE_RPC_URL=wss://rpc.polkadot.io
+    waitFor: [push-indexer, deploy-backend]
+
+  # ---------------------------------------------------------------------------
+  # Dashboard (build with backend URL baked into NEXT_PUBLIC_API_URL)
+  # ---------------------------------------------------------------------------
+  - id: build-dashboard
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        BACKEND_URL=$(cat /workspace/backend_url.txt)
+        API_URL="$${BACKEND_URL}/api/v1"
+        echo "Building dashboard with NEXT_PUBLIC_API_URL=$${API_URL}"
+        docker build \
+          -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/dashboard:${SHORT_SHA} \
+          -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/dashboard:latest \
+          --build-arg NEXT_PUBLIC_API_URL="$${API_URL}" \
+          --build-arg NEXT_PUBLIC_API_KEY=${_API_KEY} \
+          -f apps/dashboard/Dockerfile \
+          apps/dashboard
+    waitFor: [backend-url]
+
+  - id: push-dashboard
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/dashboard
+    waitFor: [build-dashboard]
+
+  - id: deploy-dashboard
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        BACKEND_URL=$(cat /workspace/backend_url.txt)
+        INTERNAL_API_URL="$${BACKEND_URL}/api/v1"
+        gcloud run deploy ${_DASHBOARD_SERVICE} \
+          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/dashboard:${SHORT_SHA} \
+          --region=${_REGION} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --port=8080 \
+          --cpu=1 \
+          --memory=512Mi \
+          --min-instances=0 \
+          --max-instances=10 \
+          --timeout=300 \
+          --set-secrets=API_KEY=polkaudit-api-key:latest \
+          --set-env-vars=INTERNAL_API_URL=$${INTERNAL_API_URL},NEXT_PUBLIC_API_KEY=${_API_KEY},LOG_LEVEL=INFO
+    waitFor: [push-dashboard]
+
+  - id: summary
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        echo "=== PolkAudit deployed ==="
+        for SVC in ${_BACKEND_SERVICE} ${_INDEXER_SERVICE} ${_DASHBOARD_SERVICE}; do
+          URL=$(gcloud run services describe "$$SVC" --region=${_REGION} --format='value(status.url)' 2>/dev/null || echo "n/a")
+          echo "  $$SVC: $$URL"
+        done
+    waitFor: [deploy-dashboard, deploy-indexer]

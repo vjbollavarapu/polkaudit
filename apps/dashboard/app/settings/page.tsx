@@ -9,6 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import {
   getApiBase,
   getApiKeyOverride,
+  getApiKeyStatus,
+  getEffectiveApiKey,
   setApiKeyOverride,
   fetchHealth,
 } from "@/lib/api";
@@ -23,10 +25,12 @@ import {
 } from "lucide-react";
 
 const APP_VERSION = "1.0.0";
+const DEV_API_KEY_HINT = "dev-secret-key";
 
 function EnvironmentInfo() {
   const apiBase = getApiBase();
   const env = process.env.NODE_ENV === "production" ? "Production" : "Development";
+  const keyStatus = getApiKeyStatus();
 
   return (
     <div className="rounded-lg border border-border bg-card p-6">
@@ -35,7 +39,8 @@ function EnvironmentInfo() {
         <h3 className="text-lg font-semibold">Environment Information</h3>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
-        Read-only configuration values from your environment.
+        Values loaded from <code className="text-xs">.env.local</code> (read-only here).
+        Edit the API key in the panel on the right.
       </p>
 
       <div className="mt-6 space-y-4">
@@ -43,6 +48,15 @@ function EnvironmentInfo() {
           <Label className="text-xs text-muted-foreground">API Base URL</Label>
           <div className="rounded-md bg-muted px-3 py-2">
             <code className="text-sm">{apiBase}</code>
+          </div>
+        </div>
+
+        <div className="grid gap-1">
+          <Label className="text-xs text-muted-foreground">API Key (from env)</Label>
+          <div className="rounded-md bg-muted px-3 py-2">
+            <code className="text-sm">
+              {keyStatus.hasEnvKey ? "Configured in .env.local" : "Not set — use custom key →"}
+            </code>
           </div>
         </div>
 
@@ -55,17 +69,15 @@ function EnvironmentInfo() {
 
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">Environment</Label>
-          <div className="flex items-center gap-2">
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-medium ${
-                env === "Production"
-                  ? "bg-success/20 text-success"
-                  : "bg-warning/20 text-warning"
-              }`}
-            >
-              {env}
-            </span>
-          </div>
+          <span
+            className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ${
+              env === "Production"
+                ? "bg-success/20 text-success"
+                : "bg-warning/20 text-warning"
+            }`}
+          >
+            {env}
+          </span>
         </div>
       </div>
     </div>
@@ -74,39 +86,80 @@ function EnvironmentInfo() {
 
 function ApiKeySettings() {
   const [apiKey, setApiKey] = useState("");
-  const [enabled, setEnabled] = useState(false);
+  const [useCustomKey, setUseCustomKey] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const override = getApiKeyOverride();
-    setApiKey(override.key);
-    setEnabled(override.enabled);
+    const envKey = process.env.NEXT_PUBLIC_API_KEY || "";
+    if (override.enabled && override.key) {
+      setApiKey(override.key);
+      setUseCustomKey(true);
+    } else if (envKey) {
+      setApiKey(envKey);
+      setUseCustomKey(false);
+    } else {
+      setApiKey("");
+      setUseCustomKey(true);
+    }
   }, []);
 
   const handleSave = () => {
-    setApiKeyOverride(apiKey, enabled);
+    if (useCustomKey && !apiKey.trim()) {
+      toast.error("Enter an API key or turn off custom key mode");
+      return;
+    }
+    setApiKeyOverride(useCustomKey ? apiKey.trim() : "", useCustomKey);
     setSaved(true);
-    toast.success("API key settings saved");
+    toast.success(
+      useCustomKey
+        ? "Custom API key saved"
+        : "Using API key from .env.local"
+    );
     setTimeout(() => setSaved(false), 2000);
   };
+
+  const applyDevDefault = () => {
+    setApiKey(DEV_API_KEY_HINT);
+    setUseCustomKey(true);
+    toast.message("Development key filled — click Save Settings");
+  };
+
+  const status = getApiKeyStatus();
+  const activeKey = getEffectiveApiKey();
 
   return (
     <div className="rounded-lg border border-border bg-card p-6">
       <div className="flex items-center gap-2">
         <Key className="h-5 w-5 text-muted-foreground" />
-        <h3 className="text-lg font-semibold">API Key Override</h3>
+        <h3 className="text-lg font-semibold">API Connection</h3>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
-        Override the default API key with a custom value. This is stored in your browser only.
+        Must match <code className="text-xs">API_KEY</code> in{" "}
+        <code className="text-xs">apps/backend/.env</code>.
       </p>
 
+      <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+        {activeKey ? (
+          <span className="text-success">Active key configured</span>
+        ) : (
+          <span className="text-destructive">No active API key — requests may fail</span>
+        )}
+      </div>
+
       <div className="mt-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="api-key-enabled">Enable API key override</Label>
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-0.5">
+            <Label htmlFor="api-key-custom">Use custom API key</Label>
+            <p className="text-xs text-muted-foreground">
+              Off = use <code className="text-xs">.env.local</code>
+              {status.hasEnvKey ? " (configured)" : " (not set)"}
+            </p>
+          </div>
           <Switch
-            id="api-key-enabled"
-            checked={enabled}
-            onCheckedChange={setEnabled}
+            id="api-key-custom"
+            checked={useCustomKey}
+            onCheckedChange={setUseCustomKey}
           />
         </div>
 
@@ -114,20 +167,31 @@ function ApiKeySettings() {
           <Label htmlFor="api-key">API Key</Label>
           <Input
             id="api-key"
-            type="password"
+            type="text"
+            autoComplete="off"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="Enter your API key"
-            disabled={!enabled}
+            placeholder={DEV_API_KEY_HINT}
+            readOnly={!useCustomKey && !!status.hasEnvKey}
+            className={!useCustomKey && status.hasEnvKey ? "opacity-80" : ""}
           />
           <p className="text-xs text-muted-foreground">
-            This key will be used for all API requests when enabled.
+            {useCustomKey
+              ? "Editable — stored in your browser only."
+              : status.hasEnvKey
+                ? "Using env key. Turn on custom key to type a different value."
+                : "Turn on custom key or add NEXT_PUBLIC_API_KEY to .env.local."}
           </p>
         </div>
 
-        <Button onClick={handleSave} disabled={saved}>
-          {saved ? "Saved" : "Save Settings"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={applyDevDefault}>
+            Fill dev key
+          </Button>
+          <Button type="button" onClick={handleSave} disabled={saved}>
+            {saved ? "Saved" : "Save Settings"}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -143,7 +207,7 @@ function ConnectionTest() {
     try {
       const response = await fetchHealth();
       setStatus("success");
-      setMessage(`Connected successfully. API version: ${response.version || "unknown"}`);
+      setMessage(`Backend reachable (${response.status || "ok"})`);
       toast.success("Connection test successful");
     } catch (error) {
       setStatus("error");
@@ -159,11 +223,12 @@ function ConnectionTest() {
         <h3 className="text-lg font-semibold">Connection Test</h3>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
-        Test the connection to the backend API.
+        Checks backend health at <code className="text-xs">/health</code> (no API key required).
       </p>
 
       <div className="mt-6 space-y-4">
         <Button
+          type="button"
           onClick={testConnection}
           disabled={status === "loading"}
           variant="outline"
@@ -203,7 +268,7 @@ export default function SettingsPage() {
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Portal Settings</h2>
           <p className="text-sm text-muted-foreground">
-            Configure your portal connection and view environment details.
+            Configure API access. Environment URL is read-only; API key can be edited on the right.
           </p>
         </div>
 

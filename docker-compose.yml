@@ -1,0 +1,81 @@
+# PolkAudit — local full stack (Postgres + backend + indexer + dashboard)
+#
+# First run builds images and runs migrations (~5–10 min for indexer catch-up).
+#
+#   docker compose up --build
+#
+# URLs:
+#   Dashboard  http://localhost:3000
+#   Backend    http://localhost:8000/docs
+#   Indexer    http://localhost:8001/health
+#
+# Using Neon instead of local Postgres: run only postgres-less services with
+# DATABASE_URL in a root .env file, or keep using ./run.sh per app (see README).
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: polkaudit
+    ports:
+      - "5432:5432"
+    volumes:
+      - polkaudit_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d polkaudit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./apps/backend
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/polkaudit
+      API_KEY: dev-secret-key
+      LOG_LEVEL: INFO
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  indexer:
+    build:
+      context: ./apps/indexer
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/polkaudit
+      SUBSTRATE_RPC_URL: wss://rpc.polkadot.io
+      LOG_LEVEL: INFO
+      PORT: "8001"
+      RETRY_DELAY_SECONDS: 2
+      INDEXER_CATCHUP_WINDOW: 500
+    ports:
+      - "8001:8001"
+    depends_on:
+      backend:
+        condition: service_started
+
+  dashboard:
+    build:
+      context: ./apps/dashboard
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        NEXT_PUBLIC_API_KEY: dev-secret-key
+    environment:
+      API_KEY: dev-secret-key
+      NEXT_PUBLIC_API_KEY: dev-secret-key
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      INTERNAL_API_URL: http://backend:8000/api/v1
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  polkaudit_pgdata:

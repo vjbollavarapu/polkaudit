@@ -23,7 +23,9 @@ interface TopbarProps {
   showSearch?: boolean;
 }
 
-export function Topbar({ title, showSearch = false }: TopbarProps) {
+import { Suspense } from "react";
+
+function TopbarContent({ title, showSearch = false }: TopbarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -99,5 +101,13 @@ export function Topbar({ title, showSearch = false }: TopbarProps) {
         </DropdownMenu>
       </div>
     </header>
+  );
+}
+
+export function Topbar(props: TopbarProps) {
+  return (
+    <Suspense fallback={<header className="sticky top-0 z-40 flex h-14 items-center border-b border-border bg-background px-4 lg:px-6" />}>
+      <TopbarContent {...props} />
+    </Suspense>
   );
 }

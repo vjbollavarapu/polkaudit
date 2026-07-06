@@ -1,0 +1,16 @@
+# PolkAudit indexer dependencies
+# Install: pip install -r requirements.txt
+#
+# IMPORTANT: Install "substrate-interface" (with hyphen).
+# Do NOT run: pip install substrateinterface  (that is a broken 1.0.0 stub)
+
+substrate-interface==1.7.11
+scalecodec>=1.2.9
+sqlalchemy>=2.0
+asyncpg>=0.28
+pydantic-settings>=2.0
+structlog>=23.1
+prometheus-client>=0.17
+aiohttp>=3.9
+greenlet>=3.0
+python-dotenv>=1.0

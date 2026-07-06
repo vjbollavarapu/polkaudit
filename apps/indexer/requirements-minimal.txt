@@ -1,0 +1,2 @@
+# Same as requirements.txt (kept for docs that reference this name)
+-r requirements.txt

@@ -1,0 +1,22 @@
+[Unit]
+Description=PolkAudit Indexer (Polkadot block scanner)
+Documentation=https://github.com/YOUR_ORG/polkaudit/blob/main/docs/HYBRID_DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Ubuntu on OCI: ubuntu | Oracle Linux: opc — setup-indexer.sh patches this
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/polkaudit/apps/indexer
+EnvironmentFile=/etc/polkaudit/indexer.env
+Environment=PYTHONPATH=/opt/polkaudit/apps/indexer
+ExecStart=/opt/polkaudit/apps/indexer/venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+# Indexer can use significant memory during catch-up
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

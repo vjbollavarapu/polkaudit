@@ -10,7 +10,7 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "PolkaAudit Portal",
+  title: "PolkAudit Portal",
   description:
     "Enterprise-grade governance and compliance dashboard for the Polkadot ecosystem",
   generator: "v0.app",

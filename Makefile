@@ -1,4 +1,4 @@
-.PHONY: fmt lint test typecheck ci dev help
+.PHONY: fmt lint test typecheck ci dev dev-up dev-down verify-e2e hybrid-verify check-governance demo-backfill help
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -29,6 +29,26 @@ typecheck: ## Run type checkers
 
 ci: fmt lint test typecheck ## Run all checks (CI mode)
 
-dev: ## Start development environment
-	@echo "Starting development environment..."
-	@echo "Not implemented yet. Use 'docker-compose up' or individual start commands."
+dev: dev-up ## Start full stack via Docker Compose
+
+dev-up: ## Build and start postgres + backend + indexer + dashboard
+	docker compose up --build
+
+dev-down: ## Stop Docker Compose stack
+	docker compose down
+
+verify-e2e: ## Run automated health/stats/export checks (local stack)
+	@chmod +x scripts/verify-e2e.sh
+	@./scripts/verify-e2e.sh
+
+hybrid-verify: ## Verify Oracle indexer + GCP Cloud Run (set BACKEND_URL, API_KEY)
+	@chmod +x scripts/hybrid-verify.sh
+	@./scripts/hybrid-verify.sh
+
+check-governance: ## DB + API counts for proposals/votes/treasury
+	@chmod +x scripts/check-governance-data.sh
+	@./scripts/check-governance-data.sh
+
+demo-backfill: ## Reset indexer tables + set demo INDEXER_START_BLOCK (interactive)
+	@chmod +x scripts/demo-backfill.sh
+	@./scripts/demo-backfill.sh

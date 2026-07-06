@@ -19,7 +19,8 @@ import { useState, useEffect } from "react";
 import { getApiBase, hasApiKey, fetchHealth } from "@/lib/api";
 
 const navigation = [
-  { name: "Overview", href: "/overview", icon: LayoutDashboard },
+  { name: "Overview", href: "/", icon: LayoutDashboard },
+
   { name: "Proposals", href: "/proposals", icon: FileText },
   { name: "Treasury", href: "/treasury", icon: Wallet },
   { name: "Exports", href: "/exports", icon: Download },
@@ -88,8 +89,19 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
-  const apiKeySet = hasApiKey();
+  const [apiKeySet, setApiKeySet] = useState(true); // Default to true to match server-side rendering (optimistic)
   const env = process.env.NODE_ENV === "production" ? "Prod" : "Dev";
+
+  useEffect(() => {
+    const refresh = () => setApiKeySet(hasApiKey());
+    refresh();
+    window.addEventListener('storage', refresh);
+    window.addEventListener('polkaudit-settings-changed', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('polkaudit-settings-changed', refresh);
+    };
+  }, []);
 
   return (
     <div className="flex h-full flex-col bg-sidebar">
@@ -98,7 +110,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary">
             <span className="text-sm font-bold text-primary-foreground">PA</span>
           </div>
-          <span className="text-lg font-semibold text-sidebar-foreground">PolkaAudit</span>
+          <span className="text-lg font-semibold text-sidebar-foreground">PolkAudit</span>
         </Link>
       </div>
 

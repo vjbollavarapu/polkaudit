@@ -1,294 +1,198 @@
-// API Types
-export interface OverviewStats {
-  total_proposals: number;
-  total_votes: number;
-  treasury_spends: number;
-  last_indexed_block: number;
-  indexer_status: "OK" | "DEGRADED" | "DOWN";
-  updated_at: string;
+/** Browser and server default; Docker sets INTERNAL_API_URL for server-side fetches. */
+function getApiBaseUrl(): string {
+    if (typeof window === 'undefined' && process.env.INTERNAL_API_URL) {
+        return process.env.INTERNAL_API_URL;
+    }
+    return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 }
 
-export interface ActivityItem {
-  type: string;
-  title: string;
-  timestamp: string;
-  ref_id: string;
+const API_URL = getApiBaseUrl();
+
+/** Server-side key (Server Components) — from API_KEY in .env.local */
+function getServerApiKey(): string {
+    return process.env.API_KEY || process.env.NEXT_PUBLIC_API_KEY || '';
+}
+
+/** Resolved key for the current context (server env or browser override). */
+export function getEffectiveApiKey(): string {
+    if (typeof window !== 'undefined') {
+        const override = getApiKeyOverride();
+        if (override.enabled && override.key) {
+            return override.key;
+        }
+        return process.env.NEXT_PUBLIC_API_KEY || '';
+    }
+    return getServerApiKey();
+}
+
+export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
+    const apiKey = getEffectiveApiKey();
+    const headers = {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { 'X-API-KEY': apiKey } : {}),
+        ...options.headers,
+    };
+
+    const res = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers,
+        cache: 'no-store',
+    });
+
+    if (!res.ok) {
+        throw new Error(`API Error: ${res.status} ${res.statusText}`);
+    }
+
+    return res.json();
+}
+
+export function getApiBase() {
+    return API_URL;
+}
+
+export function hasApiKey() {
+    if (getEffectiveApiKey()) return true;
+    // Client bundles only expose NEXT_PUBLIC_* vars
+    return !!(process.env.NEXT_PUBLIC_API_KEY || process.env.API_KEY);
+}
+
+export async function fetchHealth() {
+    // Check backend health (proxy for system health)
+    // Backend is at API_URL's root usually, but here API_URL includes /api/v1
+    // So we strip /api/v1 or just call /health on the domain
+    const baseUrl = API_URL.replace('/api/v1', '');
+    const res = await fetch(`${baseUrl}/health`);
+    if (!res.ok) throw new Error('Health check failed');
+    return res.json();
+}
+
+export interface StatsOverview {
+    total_proposals: number;
+    total_votes: number;
+    total_treasury_spend: string;
+    total_blocks_indexed: number;
+    total_extrinsics: number;
+    last_indexed_block: number;
 }
 
 export interface Proposal {
-  id: string;
-  title: string;
-  status: "Open" | "Passed" | "Rejected" | "Executed" | "Cancelled";
-  created_at: string;
-  votes_for: number;
-  votes_against: number;
-  turnout: number;
-}
-
-export interface ProposalListResponse {
-  items: Proposal[];
-  page: number;
-  pageSize: number;
-  total: number;
-}
-
-export interface TimelineEvent {
-  label: string;
-  timestamp: string;
-  details: string | null;
-}
-
-export interface ProposalDetail {
-  id: string;
-  title: string;
-  status: string;
-  created_at: string;
-  proposer: string | null;
-  description: string | null;
-  outcome: string | null;
-  timeline: TimelineEvent[];
-  raw: Record<string, unknown>;
+    id: number;
+    proposal_index: number;
+    block_number: number;
+    section: string;
+    method: string;
+    proposer: string;
+    status: string;
 }
 
 export interface TreasurySpend {
-  id: string;
-  beneficiary: string;
-  amount: number;
-  asset: string;
-  approved_at: string;
-  status: "Proposed" | "Approved" | "Paid" | "Rejected";
-  proposal_id: string | null;
+    id: number;
+    block_number: number;
+    beneficiary: string;
+    value: string;
 }
 
-export interface TreasurySpendListResponse {
-  items: TreasurySpend[];
-  page: number;
-  pageSize: number;
-  total: number;
-}
+export const api = {
+    getStats: () => fetchAPI('/stats/overview') as Promise<StatsOverview>,
+    getProposals: (params?: any) => fetchAPI('/proposals') as Promise<Proposal[]>,
+    getTreasurySpends: () => fetchAPI('/treasury/spends') as Promise<TreasurySpend[]>,
+};
 
-export interface HealthResponse {
-  status: string;
-  version?: string;
-}
-
-// API Configuration
-const API_KEY_STORAGE_KEY = "polkaaudit_api_key_override";
-const API_KEY_ENABLED_KEY = "polkaaudit_api_key_enabled";
-
-export function getApiBase(): string {
-  return process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
-}
-
-export function getApiKey(): string | null {
-  // Only use localStorage override on client - server API key should be used via server actions
-  if (typeof window !== "undefined") {
-    const enabled = localStorage.getItem(API_KEY_ENABLED_KEY);
-    if (enabled === "true") {
-      const override = localStorage.getItem(API_KEY_STORAGE_KEY);
-      if (override) return override;
-    }
-  }
-  return null;
-}
-
-export function setApiKeyOverride(key: string, enabled: boolean): void {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(API_KEY_STORAGE_KEY, key);
-    localStorage.setItem(API_KEY_ENABLED_KEY, enabled ? "true" : "false");
-  }
-}
-
-export function getApiKeyOverride(): { key: string; enabled: boolean } {
-  if (typeof window !== "undefined") {
-    return {
-      key: localStorage.getItem(API_KEY_STORAGE_KEY) || "",
-      enabled: localStorage.getItem(API_KEY_ENABLED_KEY) === "true",
-    };
-  }
-  return { key: "", enabled: false };
-}
-
-export function hasApiKey(): boolean {
-  return getApiKey() !== null;
-}
-
-// API Error class
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public status?: number
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
-
-// Main fetch function with retry logic
-export async function apiFetch<T>(
-  path: string,
-  options: RequestInit = {},
-  retries = 1
-): Promise<T> {
-  const base = getApiBase();
-  const url = `${base}${path}`;
-  const apiKey = getApiKey();
-
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    ...options.headers,
-  };
-
-  if (apiKey) {
-    (headers as Record<string, string>)["X-API-KEY"] = apiKey;
-  }
-
-  const fetchWithRetry = async (attempt: number): Promise<Response> => {
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers,
-      });
-      return response;
-    } catch (error) {
-      if (attempt < retries) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        return fetchWithRetry(attempt + 1);
-      }
-      throw new ApiError(
-        error instanceof Error ? error.message : "Network error"
-      );
-    }
-  };
-
-  const response = await fetchWithRetry(0);
-
-  if (!response.ok) {
-    throw new ApiError(`API error: ${response.statusText}`, response.status);
-  }
-
-  return response.json();
-}
-
-// File download helper
-export async function apiDownload(
-  path: string,
-  filename: string
-): Promise<void> {
-  const base = getApiBase();
-  const url = `${base}${path}`;
-  const apiKey = getApiKey();
-
-  const headers: HeadersInit = {};
-  if (apiKey) {
-    (headers as Record<string, string>)["X-API-KEY"] = apiKey;
-  }
-
-  const response = await fetch(url, { headers });
-
-  if (!response.ok) {
-    throw new ApiError(`Download failed: ${response.statusText}`, response.status);
-  }
-
-  const blob = await response.blob();
-  const downloadUrl = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = downloadUrl;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  window.URL.revokeObjectURL(downloadUrl);
-}
-
-// Typed API functions
-export async function fetchHealth(): Promise<HealthResponse> {
-  return apiFetch<HealthResponse>("/health");
-}
-
-export async function fetchOverviewStats(): Promise<OverviewStats> {
-  return apiFetch<OverviewStats>("/stats/overview");
-}
-
-export async function fetchActivity(limit = 10): Promise<ActivityItem[]> {
-  return apiFetch<ActivityItem[]>(`/governance/activity?limit=${limit}`);
-}
-
-export interface ProposalFilters {
-  page?: number;
-  pageSize?: number;
-  status?: string;
-  q?: string;
-  from?: string;
-  to?: string;
-}
-
-export async function fetchProposals(
-  filters: ProposalFilters = {}
-): Promise<ProposalListResponse> {
-  const params = new URLSearchParams();
-  if (filters.page) params.set("page", String(filters.page));
-  if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
-  if (filters.status) params.set("status", filters.status);
-  if (filters.q) params.set("q", filters.q);
-  if (filters.from) params.set("from", filters.from);
-  if (filters.to) params.set("to", filters.to);
-
-  const query = params.toString();
-  return apiFetch<ProposalListResponse>(
-    `/governance/proposals${query ? `?${query}` : ""}`
-  );
+export interface ProposalDetail extends Proposal {
+    description: string | null;
+    created_at: string;
+    timeline: any[];
+    votes: any[];
+    outcome: string | null;
+    raw: any;
+    title: string;
 }
 
 export async function fetchProposalDetail(id: string): Promise<ProposalDetail> {
-  return apiFetch<ProposalDetail>(`/governance/proposals/${id}`);
+    // In a real app, this would fetch specific details
+    // For now, we mock extra details or fetch from a detail endpoint if it existed
+    // Since we don't have a detail endpoint yet, we might error or mock
+    // Let's implement a basic lookup if the backend supports it, otherwise mock for MVP to pass build
+    // The backend router shows: @router.get("/{proposal_id}", response_model=ProposalResponse)
+    // So we can fetch it.
+    return fetchAPI(`/proposals/${id}`) as Promise<ProposalDetail>;
 }
 
-export interface TreasuryFilters {
-  page?: number;
-  pageSize?: number;
-  status?: string;
-  q?: string;
-  from?: string;
-  to?: string;
-  min?: number;
-  max?: number;
+export async function downloadExportCsv(type: 'proposals' | 'spends') {
+    // Navigate to backend export URL
+    const baseUrl = API_URL;
+    // We can't use X-API-KEY in standard navigation easily without a proxy or cookie
+    // But we implemented a GET /api/v1/export/proposals/csv endpoint
+    // If it requires Auth, browser navigation won't work well unless we use a token in URL or cookie
+    // Backend Auth: `get_api_key` checks header.
+    // Workaround: Fetch blob with header and download via JS
+    const endpoint = type === 'proposals' ? '/export/proposals/csv' : '/export/treasury/csv'; // Treasury CSV not implemented yet on backend but requested
+
+    // For now, let's implement proposals export
+    if (type === 'proposals') {
+        const apiKey = getEffectiveApiKey();
+        const res = await fetch(`${API_URL}/export/proposals/csv`, {
+            headers: apiKey ? { 'X-API-KEY': apiKey } : {},
+        });
+        if (!res.ok) throw new Error('Export failed');
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `proposals-export-${new Date().toISOString()}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } else {
+        alert("Export type not yet implemented on backend");
+    }
 }
 
-export async function fetchTreasurySpends(
-  filters: TreasuryFilters = {}
-): Promise<TreasurySpendListResponse> {
-  const params = new URLSearchParams();
-  if (filters.page) params.set("page", String(filters.page));
-  if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
-  if (filters.status) params.set("status", filters.status);
-  if (filters.q) params.set("q", filters.q);
-  if (filters.from) params.set("from", filters.from);
-  if (filters.to) params.set("to", filters.to);
-  if (filters.min !== undefined) params.set("min", String(filters.min));
-  if (filters.max !== undefined) params.set("max", String(filters.max));
-
-  const query = params.toString();
-  return apiFetch<TreasurySpendListResponse>(
-    `/treasury/spends${query ? `?${query}` : ""}`
-  );
+export async function downloadExportJson() {
+    const stats = await api.getStats();
+    const blob = new Blob([JSON.stringify(stats, null, 2)], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `overview-data-${new Date().toISOString()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
 }
 
-export async function downloadExportCsv(type: "proposals" | "spends"): Promise<void> {
-  return apiDownload(`/export/csv?type=${type}`, `${type}-export.csv`);
+// Client-side API Key Override helpers (using localStorage)
+const STORAGE_KEY = 'polkaudit_api_key_override';
+
+export function getApiKeyOverride() {
+    if (typeof window === 'undefined') return { key: '', enabled: false };
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) return JSON.parse(stored);
+    } catch (e) { console.error(e); }
+    return { key: '', enabled: false };
 }
 
-export async function downloadExportJson(): Promise<void> {
-  const data = await fetchOverviewStats();
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: "application/json",
-  });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "overview-export.json";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  window.URL.revokeObjectURL(url);
+export function setApiKeyOverride(key: string, enabled: boolean) {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ key, enabled }));
+    window.dispatchEvent(new Event('polkaudit-settings-changed'));
+}
+
+/** Whether a key is available from env and/or browser override. */
+export function getApiKeyStatus(): {
+    hasEnvKey: boolean;
+    hasOverride: boolean;
+    usingOverride: boolean;
+} {
+    const hasEnvKey = !!(process.env.API_KEY || process.env.NEXT_PUBLIC_API_KEY);
+    if (typeof window === 'undefined') {
+        return { hasEnvKey, hasOverride: false, usingOverride: false };
+    }
+    const override = getApiKeyOverride();
+    return {
+        hasEnvKey,
+        hasOverride: !!(override.enabled && override.key),
+        usingOverride: !!(override.enabled && override.key),
+    };
 }

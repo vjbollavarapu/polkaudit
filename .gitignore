@@ -4,6 +4,15 @@
 .vscode
 *.log
 
+# Private notes / local-only planning
+private/
+secrets/
+credentials/
+notes/private/
+docs/private/
+*_PRIVATE.md
+PRIVATE_*.md
+
 # Python
 __pycache__/
 *.py[cod]
@@ -11,6 +20,10 @@ __pycache__/
 venv/
 .venv/
 .env
+.env.local
+.env.*
+!.env.example
+!**/.env.example
 .mypy_cache/
 .pytest_cache/
 .coverage
@@ -31,3 +44,30 @@ coverage/
 # Misc
 .terraform/
 *.tfstate
+*.tfstate.*
+
+# Cloud / deploy credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*service-account*.json
+*service_account*.json
+gcloud-*.json
+google-credentials*.json
+firebase-adminsdk*.json
+application_default_credentials.json
+
+# Database exports / local backups
+*.dump
+*.sql
+*.sql.gz
+*.backup
+*.bak
+
+# Local deploy artifacts
+.vercel/
+.netlify/
+.serverless/
